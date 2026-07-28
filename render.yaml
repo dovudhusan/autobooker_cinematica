@@ -1,0 +1,31 @@
+services:
+  - type: worker
+    name: cinematica-autobooker
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: MOVIE_PAGE_ID
+        sync: false
+      - key: BOOKING_EMAIL
+        sync: false
+      - key: BOOKING_PHONE
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: POLL_INTERVAL_SEC
+        value: "30"
+      - key: TIME_FROM
+        value: "19:00"
+      - key: TIME_TO
+        value: "00:00"
+      - key: ALLOW_VIP
+        value: "false"
+      - key: HALL_PREFERENCE
+        value: "imax"
+      - key: DRY_RUN
+        value: "true"
+      - key: STOP_ON_SUCCESS
+        value: "true"
