@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
-import type { MovieTarget, TargetMode } from "./types.js";
+import type { HallPreference, MovieTarget, SeatStrategy, TargetMode } from "./types.js";
 
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -29,11 +29,20 @@ const DEFAULT_LABELS: Record<string, string> = {
   "954": "Spider-Man ENG",
 };
 
+/** RU → Atmos + fixed seats; ENG → any hall + any seats */
+function defaultsForPage(pageId: string): {
+  hallPreference: HallPreference;
+  seatStrategy: SeatStrategy;
+} {
+  if (pageId === "954") {
+    return { hallPreference: "all", seatStrategy: "any" };
+  }
+  return { hallPreference: "atmos", seatStrategy: "preferred" };
+}
+
 /**
- * MOVIE_TARGETS examples:
- *   952:notify,954@2026-08-06:book
- *   952,954@2026-08-06
- * Format: pageId[@date][:notify|book]  (default mode = book)
+ * Format: pageId[@date][:notify|book]
+ * Hall/seat strategy is chosen by movie id (952 Atmos preferred, 954 any).
  */
 function parseMovieTargets(): MovieTarget[] {
   const raw = process.env.MOVIE_TARGETS?.trim() || process.env.MOVIE_PAGE_ID?.trim() || "952";
@@ -44,10 +53,13 @@ function parseMovieTargets(): MovieTarget[] {
     const pageId = match[1];
     const dateRaw = match[2];
     const mode = (match[3]?.toLowerCase() ?? "book") as TargetMode;
+    const defaults = defaultsForPage(pageId);
     return {
       pageId,
       date: dateRaw ? normalizeApiDate(dateRaw) : undefined,
       mode,
+      hallPreference: defaults.hallPreference,
+      seatStrategy: defaults.seatStrategy,
       label: DEFAULT_LABELS[pageId] ?? `movie ${pageId}`,
     };
   });
@@ -74,7 +86,6 @@ if (!phone?.isValid()) {
 export const config = {
   baseUrl: "https://cinematica.uz",
   movieTargets: parseMovieTargets(),
-  /** @deprecated use movieTargets — kept for single-id callers */
   get moviePageId(): string {
     return this.movieTargets[0]?.pageId ?? "952";
   },
@@ -86,17 +97,9 @@ export const config = {
   timeFrom: required("TIME_FROM", "19:00"),
   timeTo: required("TIME_TO", "23:00"),
   allowVip: bool("ALLOW_VIP", false),
-  /**
-   * imax = PEPSI IMAX only
-   * atmos = Avalon ATMOS only (default for Spider-Man)
-   * all = every non-VIP hall (VIP still needs ALLOW_VIP=true)
-   */
-  hallPreference: (process.env.HALL_PREFERENCE || "atmos").toLowerCase(),
-  /** How many adjacent center seats to hold (default 2). */
+  /** How many seats to hold (default 2). */
   seatCount: int("SEAT_COUNT", 2),
-  /** Ping Telegram as soon as preferred seats are free, then attempt hold (book mode). */
   notifyBeforeHold: bool("NOTIFY_BEFORE_HOLD", true),
   dryRun: bool("DRY_RUN", true),
-  /** Stop after every book-mode target has a successful hold (notify targets keep running). */
   stopOnSuccess: bool("STOP_ON_SUCCESS", true),
 };

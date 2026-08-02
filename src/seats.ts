@@ -1,6 +1,14 @@
 import { config } from "./config.js";
-import { ATMOS_PAIR_PRIORITY, SEAT_PRIORITY } from "./types.js";
-import type { FoundSeat, RepertorySession, SchemeSeat, SeatsResponse } from "./types.js";
+import { RU_ATMOS_PAIR_PRIORITY } from "./types.js";
+import type {
+  FoundSeat,
+  HallPreference,
+  MovieTarget,
+  RepertorySession,
+  SchemeSeat,
+  SeatStrategy,
+  SeatsResponse,
+} from "./types.js";
 
 /** Minutes from midnight. TIME_TO=00:00 means end of day (24:00). */
 export function parseClock(hhmm: string): number {
@@ -15,40 +23,41 @@ export function isInTimeWindow(time: string, from = config.timeFrom, to = config
   const t = parseClock(time);
   const start = parseClock(from);
   let end = parseClock(to);
-  // 00:00 as window end → treat as midnight (end of day)
   if (to === "00:00") end = 24 * 60;
   if (end > start) return t >= start && t < end;
-  // overnight window e.g. 22:00–02:00
   return t >= start || t < end;
 }
 
-export function hallRank(hallName: string): number {
+export function hallRank(hallName: string, allowVip = config.allowVip): number {
   const h = hallName.toLowerCase();
-  if (h.includes("vip")) return config.allowVip ? 50 : 999;
+  if (h.includes("vip")) return allowVip ? 50 : 999;
   if (h.includes("atmos")) return 0;
   if (h.includes("imax")) return 1;
   return 10;
 }
 
-export function hallAllowed(hallName: string): boolean {
-  const rank = hallRank(hallName);
+export function hallAllowed(
+  hallName: string,
+  preference: HallPreference,
+  allowVip = config.allowVip,
+): boolean {
+  const rank = hallRank(hallName, allowVip);
   if (rank >= 900) return false;
-  const pref = config.hallPreference;
-  if (pref === "all") return true;
-  if (pref === "atmos") return hallName.toLowerCase().includes("atmos");
-  // default / imax: IMAX only
+  if (preference === "all") return true;
+  if (preference === "atmos") return hallName.toLowerCase().includes("atmos");
   return hallName.toLowerCase().includes("imax");
 }
 
 export function filterSessions(
   sessions: RepertorySession[],
-  dateFilter?: string,
+  opts?: { date?: string; hallPreference?: HallPreference },
 ): RepertorySession[] {
+  const hallPref = opts?.hallPreference ?? "atmos";
   return sessions
     .filter((s) => !s.is_disabled && !s.disable_sales && !s.disable_reservation)
-    .filter((s) => (dateFilter ? s.date === dateFilter : true))
+    .filter((s) => (opts?.date ? s.date === opts.date : true))
     .filter((s) => isInTimeWindow(s.time))
-    .filter((s) => hallAllowed(s.hall))
+    .filter((s) => hallAllowed(s.hall, hallPref))
     .sort((a, b) => {
       const hall = hallRank(a.hall) - hallRank(b.hall);
       if (hall !== 0) return hall;
@@ -62,29 +71,13 @@ export function flattenScheme(seats: SeatsResponse): SchemeSeat[] {
   return seats.scheme.rows.flatMap((row) => row.seats);
 }
 
-/** Pick first free adjacent center pair (Atmos), or single preferred seat if SEAT_COUNT=1. */
-export function pickPreferredSeats(
-  seats: SeatsResponse,
+function pickFromPairs(
+  byKey: Map<string, SchemeSeat>,
+  vacant: Set<string>,
+  pairs: typeof RU_ATMOS_PAIR_PRIORITY,
 ): { seats: SchemeSeat[]; preferenceRank: number } | null {
-  const vacant = new Set(seats.vacant_seats.map((s) => s.id));
-  const byKey = new Map<string, SchemeSeat>();
-  for (const seat of flattenScheme(seats)) {
-    byKey.set(`${seat.row}:${seat.number}`, seat);
-  }
-
-  if (config.seatCount <= 1) {
-    for (let i = 0; i < SEAT_PRIORITY.length; i++) {
-      const pref = SEAT_PRIORITY[i];
-      const seat = byKey.get(`${pref.row}:${pref.number}`);
-      if (seat && vacant.has(seat.id)) {
-        return { seats: [seat], preferenceRank: i };
-      }
-    }
-    return null;
-  }
-
-  for (let i = 0; i < ATMOS_PAIR_PRIORITY.length; i++) {
-    const pref = ATMOS_PAIR_PRIORITY[i];
+  for (let i = 0; i < pairs.length; i++) {
+    const pref = pairs[i];
     const picked: SchemeSeat[] = [];
     for (const n of pref.numbers) {
       const seat = byKey.get(`${pref.row}:${n}`);
@@ -98,7 +91,86 @@ export function pickPreferredSeats(
   return null;
 }
 
-/** @deprecated use pickPreferredSeats */
+/** Any vacant seats: prefer adjacent same-row pairs, else first N vacant. */
+function pickAnySeats(
+  seats: SeatsResponse,
+  count: number,
+): { seats: SchemeSeat[]; preferenceRank: number } | null {
+  const vacantIds = new Set(seats.vacant_seats.map((s) => s.id));
+  if (vacantIds.size < count) return null;
+
+  const all = flattenScheme(seats).filter((s) => vacantIds.has(s.id));
+  if (all.length < count) return null;
+
+  if (count <= 1) {
+    const seat = [...all].sort((a, b) => Number(a.row) - Number(b.row) || a.number - b.number)[0];
+    return { seats: [seat], preferenceRank: 0 };
+  }
+
+  // Adjacent pairs in the same row (by seat number)
+  const byRow = new Map<string, SchemeSeat[]>();
+  for (const seat of all) {
+    const list = byRow.get(seat.row) ?? [];
+    list.push(seat);
+    byRow.set(seat.row, list);
+  }
+
+  const rowKeys = [...byRow.keys()].sort((a, b) => Number(a) - Number(b));
+  for (const row of rowKeys) {
+    const rowSeats = byRow.get(row)!.sort((a, b) => a.number - b.number);
+    for (let i = 0; i < rowSeats.length - 1; i++) {
+      if (rowSeats[i + 1].number === rowSeats[i].number + 1) {
+        return { seats: [rowSeats[i], rowSeats[i + 1]], preferenceRank: 0 };
+      }
+    }
+  }
+
+  // Fallback: any N vacant
+  const picked = [...all]
+    .sort((a, b) => Number(a.row) - Number(b.row) || a.number - b.number)
+    .slice(0, count);
+  return { seats: picked, preferenceRank: 100 };
+}
+
+export function pickPreferredSeats(
+  seats: SeatsResponse,
+  strategy: SeatStrategy = "preferred",
+  seatCount = config.seatCount,
+): { seats: SchemeSeat[]; preferenceRank: number } | null {
+  if (strategy === "any") {
+    return pickAnySeats(seats, seatCount);
+  }
+
+  const vacant = new Set(seats.vacant_seats.map((s) => s.id));
+  const byKey = new Map<string, SchemeSeat>();
+  for (const seat of flattenScheme(seats)) {
+    byKey.set(`${seat.row}:${seat.number}`, seat);
+  }
+
+  if (seatCount <= 1) {
+    for (let i = 0; i < RU_ATMOS_PAIR_PRIORITY.length; i++) {
+      const pref = RU_ATMOS_PAIR_PRIORITY[i];
+      for (const n of pref.numbers) {
+        const seat = byKey.get(`${pref.row}:${n}`);
+        if (seat && vacant.has(seat.id)) {
+          return { seats: [seat], preferenceRank: i };
+        }
+      }
+    }
+    return null;
+  }
+
+  return pickFromPairs(byKey, vacant, RU_ATMOS_PAIR_PRIORITY);
+}
+
+export function pickForTarget(
+  seats: SeatsResponse,
+  target: MovieTarget,
+): { seats: SchemeSeat[]; preferenceRank: number } | null {
+  return pickPreferredSeats(seats, target.seatStrategy, config.seatCount);
+}
+
+/** @deprecated */
 export function pickPreferredSeat(
   seats: SeatsResponse,
 ): FoundSeat["seats"][number] & { preferenceRank: number } | null {

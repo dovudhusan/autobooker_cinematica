@@ -1,49 +1,39 @@
 export type SeatPref = { row: number; number: number };
 
-/** Adjacent center pairs for Avalon Atmos (~17 seats/row, smaller than IMAX). */
+/** Adjacent pairs for Avalon Atmos. */
 export type SeatPairPref = { row: number; numbers: [number, number] };
 
 /**
- * Best viewing first: mid-back rows, true center (8+9), then near-center.
- * Agent books the first free adjacent pair.
+ * Russian Atmos: rows 5–6, seats 9–12 (adjacent pairs first).
  */
-export const ATMOS_PAIR_PRIORITY: SeatPairPref[] = [
-  // Favorites
-  { row: 6, numbers: [8, 9] },
-  { row: 7, numbers: [8, 9] },
-  { row: 5, numbers: [8, 9] },
-  // Near-center same rows
-  { row: 6, numbers: [9, 10] },
-  { row: 6, numbers: [7, 8] },
-  { row: 7, numbers: [9, 10] },
-  { row: 7, numbers: [7, 8] },
+export const RU_ATMOS_PAIR_PRIORITY: SeatPairPref[] = [
   { row: 5, numbers: [9, 10] },
-  { row: 5, numbers: [7, 8] },
-  // Row 8 (14 seats — center ~7+8) / row 4 / row 9
-  { row: 8, numbers: [7, 8] },
-  { row: 4, numbers: [8, 9] },
-  { row: 8, numbers: [6, 7] },
-  { row: 8, numbers: [8, 9] },
-  { row: 9, numbers: [9, 10] },
-  { row: 4, numbers: [9, 10] },
-  { row: 4, numbers: [7, 8] },
+  { row: 5, numbers: [10, 11] },
+  { row: 5, numbers: [11, 12] },
+  { row: 6, numbers: [9, 10] },
+  { row: 6, numbers: [10, 11] },
+  { row: 6, numbers: [11, 12] },
+  // Same band, non-adjacent fallbacks
+  { row: 5, numbers: [9, 11] },
+  { row: 5, numbers: [10, 12] },
+  { row: 5, numbers: [9, 12] },
+  { row: 6, numbers: [9, 11] },
+  { row: 6, numbers: [10, 12] },
+  { row: 6, numbers: [9, 12] },
 ];
 
-/** Legacy single-seat IMAX list (kept for reference / single-seat mode). */
+/** @deprecated legacy IMAX center list */
 export const SEAT_PRIORITY: SeatPref[] = [
   { row: 7, number: 13 },
   { row: 7, number: 14 },
   { row: 8, number: 17 },
   { row: 8, number: 16 },
-  { row: 7, number: 12 },
-  { row: 7, number: 11 },
-  { row: 7, number: 15 },
-  { row: 8, number: 18 },
-  { row: 8, number: 15 },
-  { row: 8, number: 14 },
 ];
 
 export type TargetMode = "notify" | "book";
+export type HallPreference = "atmos" | "imax" | "all";
+/** preferred = fixed seat list; any = first vacant seats in the hall */
+export type SeatStrategy = "preferred" | "any";
 
 export type MovieTarget = {
   pageId: string;
@@ -51,6 +41,8 @@ export type MovieTarget = {
   date?: string;
   /** notify = Telegram only; book = notify then hold */
   mode: TargetMode;
+  hallPreference: HallPreference;
+  seatStrategy: SeatStrategy;
   label: string;
 };
 

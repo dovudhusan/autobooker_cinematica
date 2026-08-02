@@ -1,7 +1,7 @@
 import { CinematicaApi } from "./api.js";
 import { availableMessage, holdSeats, newSessionMessage, successMessage } from "./book.js";
 import { config } from "./config.js";
-import { describeSeats, filterSessions, pickPreferredSeats } from "./seats.js";
+import { describeSeats, filterSessions, pickForTarget } from "./seats.js";
 import { notifyTelegram } from "./telegram.js";
 import type { FoundSeat, MovieTarget, RepertorySession } from "./types.js";
 
@@ -65,17 +65,20 @@ async function scanTarget(api: CinematicaApi, target: MovieTarget): Promise<Scan
     return { found: null, newSessions: [] };
   }
 
-  const sessions = filterSessions(await api.getSessions(target.pageId), target.date);
+  const sessions = filterSessions(await api.getSessions(target.pageId), {
+    date: target.date,
+    hallPreference: target.hallPreference,
+  });
   console.log(
     `[scan ${target.label}/${target.mode}] ${sessions.length} sessions` +
       (target.date ? ` on ${target.date}` : " (any date)") +
       ` in ${config.timeFrom}–${config.timeTo}` +
-      ` | halls=${config.hallPreference}` +
-      ` | seats=${config.seatCount}`,
+      ` | halls=${target.hallPreference}` +
+      ` | seats=${target.seatStrategy}/${config.seatCount}`,
   );
 
   if (sessions.length === 0) {
-    console.log(`  • no matching Avalon Atmos showtimes yet`);
+    console.log(`  • no matching showtimes yet`);
     return { found: null, newSessions: [] };
   }
 
@@ -88,7 +91,7 @@ async function scanTarget(api: CinematicaApi, target: MovieTarget): Promise<Scan
     const isNew = isSeeded && !known.has(session.id);
     try {
       const seats = await api.getSeats(session);
-      const picked = pickPreferredSeats(seats);
+      const picked = pickForTarget(seats, target);
       const vacantCount = seats.vacant_seats.length;
       const title = seats.repertory.movie_ru || seats.repertory.movie || target.label;
       const sessionUrl = api.sessionUrl(target.pageId, session);
@@ -209,11 +212,14 @@ async function main(): Promise<void> {
   console.log("=== Cinematica autobooker ===");
   console.log(
     `Targets: ${config.movieTargets
-      .map((t) => `${t.label}#${t.pageId}${t.date ? `@${t.date}` : ""}:${t.mode}`)
+      .map(
+        (t) =>
+          `${t.label}#${t.pageId}${t.date ? `@${t.date}` : ""}:${t.mode}/${t.hallPreference}/${t.seatStrategy}`,
+      )
       .join(", ")}`,
   );
   console.log(`Window: ${config.timeFrom}–${config.timeTo} | seats=${config.seatCount}`);
-  console.log(`Hall: ${config.hallPreference} | notifyBeforeHold=${config.notifyBeforeHold}`);
+  console.log(`notifyBeforeHold=${config.notifyBeforeHold}`);
   console.log(`Email: ${config.email} | Phone: ${config.phoneE164}`);
   console.log(`DRY_RUN=${config.dryRun} | poll every ${config.pollIntervalMs / 1000}s`);
   if (once) console.log("Mode: single scan (--once)");
